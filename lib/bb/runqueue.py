@@ -178,6 +178,9 @@ class RunQueueScheduler(object):
                     self.prev_io_pressure = io_pressure_fds.readline().split()[4].split("=")[1]
                     self.prev_memory_pressure = memory_pressure_fds.readline().split()[4].split("=")[1]
                     self.prev_pressure_time = time.time()
+                    self.prev_exceeds_cpu_pressure = False
+                    self.prev_exceeds_io_pressure = False
+                    self.prev_exceeds_memory_pressure = False
                 self.check_pressure = True
             except:
                 bb.note("The /proc/pressure files can't be read. Continuing build without monitoring pressure")
@@ -187,8 +190,8 @@ class RunQueueScheduler(object):
 
     def exceeds_max_pressure(self):
         """
-        Monitor the difference in total pressure at least once per second, if
-        BB_PRESSURE_MAX_{CPU|IO|MEMORY} are set, return True if above threshold.
+        Monitor the difference in total pressure when bitbake is finding next_buildable_task 
+        a new task, if BB_PRESSURE_MAX_{CPU|IO|MEMORY} are set, return True if above threshold.
         """
         if self.check_pressure:
             with open("/proc/pressure/cpu") as cpu_pressure_fds, \
@@ -198,15 +201,35 @@ class RunQueueScheduler(object):
                 curr_cpu_pressure = cpu_pressure_fds.readline().split()[4].split("=")[1]
                 curr_io_pressure = io_pressure_fds.readline().split()[4].split("=")[1]
                 curr_memory_pressure = memory_pressure_fds.readline().split()[4].split("=")[1]
-                exceeds_cpu_pressure =  self.rq.max_cpu_pressure and (float(curr_cpu_pressure) - float(self.prev_cpu_pressure)) > self.rq.max_cpu_pressure
-                exceeds_io_pressure =  self.rq.max_io_pressure and (float(curr_io_pressure) - float(self.prev_io_pressure)) > self.rq.max_io_pressure
-                exceeds_memory_pressure = self.rq.max_memory_pressure and (float(curr_memory_pressure) - float(self.prev_memory_pressure)) > self.rq.max_memory_pressure
+
                 now = time.time()
-                if now - self.prev_pressure_time > 1.0:
-                    self.prev_cpu_pressure = curr_cpu_pressure
-                    self.prev_io_pressure = curr_io_pressure
-                    self.prev_memory_pressure = curr_memory_pressure
-                    self.prev_pressure_time = now
+                time_diff = now - self.prev_pressure_time
+
+                if curr_cpu_pressure == self.prev_cpu_pressure:
+                    exceeds_cpu_pressure = self.prev_exceeds_cpu_pressure
+                else:
+                    cpu_pressure_diff = 0.0 if time_diff <= 0.0 else ((float(curr_cpu_pressure) - float(self.prev_cpu_pressure)) / time_diff)
+                    exceeds_cpu_pressure = self.rq.max_cpu_pressure and cpu_pressure_diff > self.rq.max_cpu_pressure
+
+                if curr_io_pressure == self.prev_io_pressure:
+                    exceeds_io_pressure = self.prev_exceeds_io_pressure
+                else:
+                    io_pressure_diff = 0.0 if time_diff <= 0.0 else ((float(curr_io_pressure) - float(self.prev_io_pressure)) / time_diff)
+                    exceeds_io_pressure = self.rq.max_io_pressure and io_pressure_diff > self.rq.max_io_pressure
+
+                if curr_memory_pressure == self.prev_memory_pressure:
+                    exceeds_memory_pressure = self.prev_exceeds_memory_pressure
+                else:
+                    memory_pressure_diff = 0.0 if time_diff <= 0.0 else ((float(curr_memory_pressure) - float(self.prev_memory_pressure)) / time_diff)
+                    exceeds_memory_pressure = self.rq.max_memory_pressure and memory_pressure_diff > self.rq.max_memory_pressure
+
+                self.prev_cpu_pressure = curr_cpu_pressure
+                self.prev_io_pressure = curr_io_pressure
+                self.prev_memory_pressure = curr_memory_pressure
+                self.prev_pressure_time = now
+                self.prev_exceeds_cpu_pressure = exceeds_cpu_pressure
+                self.prev_exceeds_io_pressure = exceeds_io_pressure
+                self.prev_exceeds_memory_pressure = exceeds_memory_pressure
             return (exceeds_cpu_pressure or exceeds_io_pressure or exceeds_memory_pressure)
         return False
 
